@@ -1,7 +1,7 @@
 # Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
 **Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
-**Driver version:** 1.2.0  
+**Driver version:** 1.2.1  
 **Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors  
 **Manufacturer strings:** `SONOFF` or `eWeLink`
 
@@ -40,8 +40,9 @@ frozen apart from serious bug fixes. See **Switching from the separate drivers**
 2. Click **Import**, paste this URL and click **Import**, then **Save** (or paste the full
    driver code instead):  
    `https://raw.githubusercontent.com/JohnFLand/Sonoff_SNZB-02_Series-Zigbee-driver-for-Hubitat/main/Sonoff_SNZB-02_Series.groovy`  
-   To update later, open the driver in **Drivers Code**, click **Import** (the URL is filled in)
-   and **Save**.
+   To update later, open the existing driver in **Drivers Code**, click **Import** (the URL is
+   filled in) and **Save**. Always update the existing driver rather than adding a new one,
+   so your devices, settings and rules stay attached to it.
 3. The driver's fingerprints match automatically when a sensor is paired. For a sensor that
    is already paired, open the device and choose
    **Sonoff SNZB-02 Series Temperature and Humidity Sensor** from the **Type** dropdown, then
@@ -339,8 +340,9 @@ shows, for example, `Remote display: EXT1 temperature 70.0°F confirmed by the s
   updates remote values about every 30 minutes.
 - Only numbers can be shown. Accepted ranges: −50 to 125 °C and 0 to 100 % with the older
   method; −20 to 60 °C and 0 to 99.9 % with the 1.0.5 method.
-- The EXT line cannot show 100 or more in the LCD's unit: it shows `HHH` instead (seen with
-  105 °F). The driver therefore sends higher temperatures as 99.9 and logs a note.
+- The EXT line cannot show 99.0 or more in the LCD's unit: it shows `HHH` instead (seen with
+  99, 99.0 and 105 °F; 98.9 °F shows correctly). The driver therefore sends higher
+  temperatures as 98.9 and logs a note.
 
 **Tested:** firmware 1.0.2, older method, temperature on EXT1 (20, 70, 73, 75 and 77 °F),
 with the button and with automatic re-send, and **Remote Display Off**. The 1.0.5 method and
@@ -489,7 +491,8 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 
 | Version | Date | Notes |
 |---|---|---|
-| 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9. |
+| 1.2.1 | 2026-11-17 | Remote display: the highest temperature sent is now 98.9 (was 99.9); the screen shows `HHH` from 99.0 upward. Driver namespace changed from `v. 1.0.0` to `JohnFLand` (it now stays fixed across versions): update by importing or pasting into the existing driver, not by adding a new one. If you did add a new one, switch each device's **Type** to it, then delete the old driver. |
+| 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9 (lowered to 98.9 in 1.2.1). |
 | 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognised instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
 | 1.0.0 | 2026-11-07 | First release. Merges the separate drivers SNZB-02x 1.5.0, SNZB-02DR2 1.13.0 and SNZB-02M 2.4.0, with the model detected from the device. Differences from those drivers: comfort attributes are numbers on every model (`comfortTempMin/Max`, `comfortHumidityMin/Max`; the SNZB-02DR2 driver used text values and `comfortHumiMin/Max`); dew point and VPD are calculated for every model and can be turned off; the Configure command, sanity checks on raw readings and logging of write responses apply to every model; `temperatureCalibration` and `humidityCalibration` are published whenever the sensor sends them; humidity is shown in whole percent on every model (the SNZB-02M driver showed 0.1 %); default values on the preferences page follow the selected temperature unit. |
 
