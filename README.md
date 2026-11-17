@@ -1,7 +1,7 @@
 # Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
 **Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
-**Driver version:** 1.1.0  
+**Driver version:** 1.2.0  
 **Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors  
 **Manufacturer strings:** `SONOFF` or `eWeLink`
 
@@ -24,6 +24,7 @@ from the device and switches on the features that model has:
 | Comfort thresholds and LCD unit written to the device | | ✓ | |
 | Device's own 24-hour min/max (as on its LCD) | | ✓ | |
 | Readings sent from Hubitat shown on its LCD (EXT1 / EXT2) | | ✓ | |
+| Offsets applied in the sensor, so its LCD matches Hubitat (optional) | | ✓ | |
 | Comfort thresholds and calibration read from the device | | | ✓ |
 | Barometric pressure (0.1 hPa, selectable unit) | | | ✓ |
 
@@ -36,7 +37,11 @@ frozen apart from serious bug fixes. See **Switching from the separate drivers**
 ## Installation
 
 1. In Hubitat, go to **Drivers Code → New Driver**
-2. Paste the full driver code and click **Save**
+2. Click **Import**, paste this URL and click **Import**, then **Save** (or paste the full
+   driver code instead):  
+   `https://raw.githubusercontent.com/JohnFLand/Sonoff_SNZB-02_Series-Zigbee-driver-for-Hubitat/main/Sonoff_SNZB-02_Series.groovy`  
+   To update later, open the driver in **Drivers Code**, click **Import** (the URL is filled in)
+   and **Save**.
 3. The driver's fingerprints match automatically when a sensor is paired. For a sensor that
    is already paired, open the device and choose
    **Sonoff SNZB-02 Series Temperature and Humidity Sensor** from the **Type** dropdown, then
@@ -141,7 +146,9 @@ driver re-sends their values automatically when the sensor next wakes — see
 
 Temperatures (including dew point, comfort temperatures and the SNZB-02DR2's own min/max) are
 shown in the hub's temperature scale (**Settings → Location**), rounded half-up to the number
-of places set in **Temperature decimal places** (default 1).
+of places set in **Temperature decimal places** (default 1). `temperatureCalibration` also
+follows the hub's scale: to 0.01 in °C and to 0.1 in °F, since the sensor stores it in 0.01 °C
+steps (0.018 °F). As a temperature difference it is converted without the +32 (1.11 °C = 2.0 °F).
 
 ### All models
 | Attribute | Description |
@@ -176,6 +183,7 @@ not flagged quickly.
 | `remoteDisplay` | State of the LCD's EXT line: `off`, `pending` (values sent, not yet confirmed by the sensor), `on`, `offline` or `unsupported` |
 | `ext1Temperature` / `ext1Humidity` | Values on the EXT1 line, published once the sensor confirms it has stored them |
 | `ext2Temperature` / `ext2Humidity` | Values on the EXT2 line (firmware 1.0.5 and later) |
+| `temperatureCalibration` / `humidityCalibration` | Calibration stored in the sensor (temperature in the hub's scale, humidity in %), read back after each Save and on Refresh. Non-zero when **Apply offsets in the sensor** is on, or if set in the eWeLink app |
 
 The Hubitat-tracked min/max accumulates from install or the last reset. The device's own
 24-hour values are kept by the sensor's firmware and can only be reset with a ~10-second hold
@@ -187,7 +195,7 @@ of its button.
 | `pressure` | Barometric pressure in the unit chosen in **Pressure unit**, with the Hubitat pressure offset applied |
 | `comfortTempMin` / `comfortTempMax` | Comfort temperatures stored in the sensor (read-only here) |
 | `comfortHumidityMin` / `comfortHumidityMax` | Comfort humidity limits stored in the sensor, % (read-only here) |
-| `temperatureCalibration` | Device-side temperature calibration, °C (read-only here) |
+| `temperatureCalibration` | Device-side temperature calibration, in the hub's temperature scale (read-only here) |
 | `humidityCalibration` | Device-side humidity calibration, % (read-only here) |
 | `pressureCalibration` | Device-side pressure calibration, hPa (read-only here) |
 
@@ -214,8 +222,8 @@ Model-specific preferences appear only for that model.
 | Min time between pressure reports | 02M | 60 s | 1–3600 | Sent on Save |
 | Max time between pressure reports | 02M | 3600 s | 10–43200 | Sent on Save |
 | Pressure reporting threshold | 02M | 1 hPa | 1–50 | Sent on Save |
-| Temperature offset | all | 0.0 °C | −20–20 °C (−36–36 °F) | Added to every reading in Hubitat; not written to the sensor |
-| Humidity offset | all | 0.0 % | −20–20 % | Added to every reading in Hubitat; not written to the sensor |
+| Temperature offset | all | 0.0 °C | −20–20 °C (−36–36 °F) | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see **Apply offsets in the sensor**) |
+| Humidity offset | all | 0.0 % | −20–20 % | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor |
 | Pressure offset | 02M | 0.0 hPa | −50–50 hPa | Added to every reading in Hubitat; always entered in hPa |
 | Calculate dew point and VPD | all | on | | Turning it off removes `dewPoint` and `vpd` |
 | LCD temperature unit | 02DR2 | Leave unchanged | Leave unchanged / °C / °F | Unit on the sensor's screen |
@@ -223,6 +231,7 @@ Model-specific preferences appear only for that model.
 | Comfort temperature maximum | 02DR2 | 26.0 °C | −10–60 °C (14–140 °F) | 🔥 shown above this value. Written to the sensor |
 | Comfort humidity minimum | 02DR2 | 40 % | 5–95 | ☀️ shown below this value. Written to the sensor |
 | Comfort humidity maximum | 02DR2 | 60 % | 5–95 | 💧 shown above this value. Written to the sensor |
+| Apply offsets in the sensor | 02DR2 | off | | Writes the temperature and humidity offsets to the sensor's calibration, so its LCD shows the same values as Hubitat. See **Offsets in the sensor (SNZB-02DR2)**. Wake the sensor before saving |
 | Remote display method | 02DR2 | Automatic | Automatic / Older method / Remote sources | How the remote-display commands reach the LCD. Automatic chooses by firmware. See **Remote display (SNZB-02DR2)** |
 | Auto-reset min/max daily | all | off | | Resets the Hubitat-tracked min/max every day at the time below |
 | Auto-reset time | all | `00:00` | | Time of day for the daily reset |
@@ -249,7 +258,25 @@ with the new number of decimal places.
 
 **Sanity checks.** Raw readings outside −40 to 125 °C, 0 to 100 % or 300 to 1100 hPa are
 treated as corrupt frames: they are ignored and logged as a warning. The check is made on the
-sensor's own value, before any Hubitat offset is applied.
+sensor's own value, before any Hubitat offset is applied (with **Apply offsets in the sensor**
+on, the sensor's value already includes its calibration).
+
+**Offsets in the sensor (SNZB-02DR2).** Normally the offsets are applied only in Hubitat, so the
+sensor's screen shows the uncorrected values. With **Apply offsets in the sensor** on, Save
+writes the offsets to the sensor's calibration attributes (FC11 `0x2003` and `0x2004`) and reads
+them back. The sensor then applies them to its screen and to the readings it sends (confirmed
+on firmware 1.0.2).
+
+- Hubitat adds only the part of the offset the sensor has not confirmed applying, so a reading
+  never gets the offset twice, even if the sensor was asleep during the Save. Until the read-back
+  arrives, Hubitat keeps adding the whole offset.
+- Turning the setting off writes 0 back to the sensor; once the sensor confirms 0, the offsets
+  are applied in Hubitat again. Wake the sensor before saving either way.
+- Turning it on replaces any calibration set earlier in the eWeLink app.
+- The `temperatureCalibration` and `humidityCalibration` attributes show what the sensor holds;
+  for example, a +3 °F offset shows as `temperatureCalibration` 3.0 °F on a °F hub (the sensor
+  stores it as 1.67 °C). Differences of less than half the sensor's 0.01 step are treated as
+  that rounding, so Hubitat adds nothing and matches the sensor's screen.
 
 ---
 
@@ -312,6 +339,8 @@ shows, for example, `Remote display: EXT1 temperature 70.0°F confirmed by the s
   updates remote values about every 30 minutes.
 - Only numbers can be shown. Accepted ranges: −50 to 125 °C and 0 to 100 % with the older
   method; −20 to 60 °C and 0 to 99.9 % with the 1.0.5 method.
+- The EXT line cannot show 100 or more in the LCD's unit: it shows `HHH` instead (seen with
+  105 °F). The driver therefore sends higher temperatures as 99.9 and logs a note.
 
 **Tested:** firmware 1.0.2, older method, temperature on EXT1 (20, 70, 73, 75 and 77 °F),
 with the button and with automatic re-send, and **Remote Display Off**. The 1.0.5 method and
@@ -443,8 +472,8 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 | `0x0005` | UINT16, % × 100 | 02DR2 (R/W), 02M (R) | Comfort humidity minimum |
 | `0x0006` | UINT16, % × 100 | 02DR2 (R/W), 02M (R) | Comfort humidity maximum |
 | `0x0007` | UINT16 | 02DR2 (R/W) | LCD temperature unit (0 = °C, 1 = °F). Rejects UINT8 writes (`0x8D`); the driver retries other types if needed |
-| `0x2003` | INT16, °C × 100 | 02M (R); 02DR2 if sent | Temperature calibration |
-| `0x2004` | INT16, % × 100 | 02M (R); 02DR2 if sent | Humidity calibration |
+| `0x2003` | INT16, °C × 100 | 02DR2 (R/W), 02M (R) | Temperature calibration (02DR2: written by **Apply offsets in the sensor**) |
+| `0x2004` | INT16, % × 100 | 02DR2 (R/W), 02M (R) | Humidity calibration (02DR2: written by **Apply offsets in the sensor**) |
 | `0x2007` | INT16, hPa × 100 | 02M (R) | Pressure calibration |
 | `0x2008` / `0x2009` | INT16, °C × 100 | 02DR2 (R) | Device 24-hour temperature max / min |
 | `0x200B` / `0x200C` | UINT16, % × 100 | 02DR2 (R) | Device 24-hour humidity max / min |
@@ -460,6 +489,7 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9. |
 | 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognised instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
 | 1.0.0 | 2026-11-07 | First release. Merges the separate drivers SNZB-02x 1.5.0, SNZB-02DR2 1.13.0 and SNZB-02M 2.4.0, with the model detected from the device. Differences from those drivers: comfort attributes are numbers on every model (`comfortTempMin/Max`, `comfortHumidityMin/Max`; the SNZB-02DR2 driver used text values and `comfortHumiMin/Max`); dew point and VPD are calculated for every model and can be turned off; the Configure command, sanity checks on raw readings and logging of write responses apply to every model; `temperatureCalibration` and `humidityCalibration` are published whenever the sensor sends them; humidity is shown in whole percent on every model (the SNZB-02M driver showed 0.1 %); default values on the preferences page follow the selected temperature unit. |
 
