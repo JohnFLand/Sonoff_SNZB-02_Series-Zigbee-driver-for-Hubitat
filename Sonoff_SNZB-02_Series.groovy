@@ -168,7 +168,7 @@ import hubitat.zigbee.zcl.DataType
 metadata {
     definition(
         name:      'Sonoff SNZB-02 Series Temperature and Humidity Sensor',
-        namespace: 'v. 1.0.0',
+        namespace: 'v. 1.2.0',
         author:    'John Land',
         importUrl: 'https://raw.githubusercontent.com/JohnFLand/Sonoff_SNZB-02_Series-Zigbee-driver-for-Hubitat/main/Sonoff_SNZB-02_Series.groovy'
     ) {
