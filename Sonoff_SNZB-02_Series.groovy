@@ -30,8 +30,8 @@
  *  Firmware before 1.0.5 has one slot (EXT1); remote humidity needs 1.0.4 or later. Firmware 1.0.5
  *  and later has two slots (EXT1, EXT2). A value is sent at once and, until the sensor confirms it,
  *  again whenever the sensor next wakes up. The display redraws the EXT line when its button is
- *  pressed briefly or at its own update, about every 30 minutes. The EXT line cannot show 100 or
- *  more in the LCD's unit (it shows "HHH"), so higher temperatures are sent as 99.9.
+ *  pressed briefly or at its own update, about every 30 minutes. The EXT line cannot show 99.0 or
+ *  more in the LCD's unit (it shows "HHH"), so higher temperatures are sent as 98.9.
  *
  *  Offsets in the sensor (SNZB-02DR2): with "Apply offsets in the sensor" on, the temperature and
  *  humidity offsets are written to the sensor's calibration attributes, so its screen and Hubitat
@@ -40,6 +40,11 @@
  *  Licensed under the Apache License, Version 2.0
  *
  *  Changelog:
+ *    1.2.1  2026-11-17  Remote display: the highest temperature sent is now 98.9 (was 99.9).
+ *                       The screen shows "HHH" from 99.0 upward (confirmed with 99 and 99.0 °F;
+ *                       98.9 °F shows correctly).
+ *                       Driver namespace changed from "v. 1.0.0" to "JohnFLand". Update by
+ *                       importing or pasting into the existing driver, not a new one.
  *    1.2.0  2026-11-17  SNZB-02DR2: new preference "Apply offsets in the sensor" writes the
  *                       temperature and humidity offsets to FC11 0x2003 / 0x2004 (°C × 100,
  *                       % × 100), reads them back on every Save and Refresh, and adds in Hubitat
@@ -82,7 +87,7 @@
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 
-@Field static final String VERSION    = '1.2.0'
+@Field static final String VERSION    = '1.2.1'
 @Field static final String TIME_STAMP = '2026-11-17'
 
 // ── Clusters ─────────────────────────────────────────────────────────────────
@@ -124,7 +129,7 @@ import hubitat.zigbee.zcl.DataType
 @Field static final Map REMOTE_RANGE = [legacyT: [-50.0, 125.0], legacyH: [0.0, 100.0],
                                         sourcesT: [-20.0, 60.0], sourcesH: [0.0, 99.9]]
 @Field static final int REMOTE_MAX_ATTEMPTS = 10     // automatic re-sends before giving up
-@Field static final BigDecimal LCD_EXT_MAX = 99.9    // the EXT line shows "HHH" at 100 or more (in the LCD's unit)
+@Field static final BigDecimal LCD_EXT_MAX = 98.9    // the EXT line shows "HHH" from 99.0 upward (in the LCD's unit)
 
 // The SNZB-02DR2 needs Sonoff's manufacturer code on FC11; the SNZB-02M is read without it
 @Field static final Map FC11_MFG_DR2 = [mfgCode: '0x1286']
@@ -168,7 +173,7 @@ import hubitat.zigbee.zcl.DataType
 metadata {
     definition(
         name:      'Sonoff SNZB-02 Series Temperature and Humidity Sensor',
-        namespace: 'v. 1.2.0',
+        namespace: 'JohnFLand',
         author:    'John Land',
         importUrl: 'https://raw.githubusercontent.com/JohnFLand/Sonoff_SNZB-02_Series-Zigbee-driver-for-Hubitat/main/Sonoff_SNZB-02_Series.groovy'
     ) {
