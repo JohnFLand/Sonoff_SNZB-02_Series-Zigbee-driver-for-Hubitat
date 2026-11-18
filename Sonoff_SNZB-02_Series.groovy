@@ -40,6 +40,17 @@
  *  Licensed under the Apache License, Version 2.0
  *
  *  Changelog:
+ *    1.3.1  2026-11-17  Removed the experimental Try Reset Device Min Max command. On firmware 1.0.2
+ *                       the sensor answers "write accepted" but keeps its own min/max unchanged, so
+ *                       they can only be reset with the button hold.
+ *    1.3.0  2026-11-17  SNZB-02DR2: new attributes Device Temp Avg and Device Humidity Avg from FC11
+ *                       0x200A / 0x200D (previously logged as unknown "reference" values), read on
+ *                       Refresh and pushed by the sensor about hourly. Zigbee2MQTT names these
+ *                       attributes "average" on Sonoff's SS-Z2N; on the SNZB-02DR2 they behave as
+ *                       24-hour averages (always between the device's own min and max).
+ *                       New EXPERIMENTAL command Try Reset Device Min Max: writes the current readings
+ *                       into the sensor's own min/max (0x2008, 0x2009, 0x200B, 0x200C) to find out
+ *                       whether they can be reset over Zigbee; a refusal is logged (0x88 = read only).
  *    1.2.1  2026-11-17  Remote display: the highest temperature sent is now 98.9 (was 99.9).
  *                       The screen shows "HHH" from 99.0 upward (confirmed with 99 and 99.0 °F;
  *                       98.9 °F shows correctly).
@@ -87,7 +98,7 @@
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 
-@Field static final String VERSION    = '1.2.1'
+@Field static final String VERSION    = '1.3.1'
 @Field static final String TIME_STAMP = '2026-11-17'
 
 // ── Clusters ─────────────────────────────────────────────────────────────────
@@ -113,10 +124,10 @@ import hubitat.zigbee.zcl.DataType
 @Field static final int FC11_PRESS_CAL    = 0x2007  // INT16,  hPa × 100 (SNZB-02M)
 @Field static final int FC11_MAX_TEMP     = 0x2008  // INT16,  °C × 100 (SNZB-02DR2 24-hour max)
 @Field static final int FC11_MIN_TEMP     = 0x2009  // INT16,  °C × 100 (SNZB-02DR2 24-hour min)
-@Field static final int FC11_PREV_TEMP    = 0x200A  // INT16,  reference temperature (meaning unknown)
+@Field static final int FC11_PREV_TEMP    = 0x200A  // INT16,  °C × 100 (SNZB-02DR2 24-hour average)
 @Field static final int FC11_MAX_HUMI     = 0x200B  // UINT16, % × 100 (SNZB-02DR2 24-hour max)
 @Field static final int FC11_MIN_HUMI     = 0x200C  // UINT16, % × 100 (SNZB-02DR2 24-hour min)
-@Field static final int FC11_PREV_HUMI    = 0x200D  // UINT16, reference humidity (meaning unknown)
+@Field static final int FC11_PREV_HUMI    = 0x200D  // UINT16, % × 100 (SNZB-02DR2 24-hour average)
 
 // SNZB-02DR2 remote display (EXT line). Written without a manufacturer code, as Zigbee2MQTT does
 // (accepted that way on firmware 1.0.2).
@@ -198,11 +209,13 @@ metadata {
         attribute 'Last Reading',           'string'
         attribute 'Readings Since Reset',   'number'
 
-        // SNZB-02DR2: device-native 24-hour min/max (as shown on its LCD)
+        // SNZB-02DR2: device-native 24-hour min/max (as shown on its LCD) and averages
         attribute 'Device Humidity Max',    'string'
         attribute 'Device Humidity Min',    'string'
+        attribute 'Device Humidity Avg',    'string'
         attribute 'Device Temp Max',        'string'
         attribute 'Device Temp Min',        'string'
+        attribute 'Device Temp Avg',        'string'
 
         // Settings stored in the sensor (SNZB-02DR2 and SNZB-02M)
         attribute 'comfortTempMin',         'number'
@@ -563,12 +576,13 @@ def refresh() {
     if (isModelDR2()) {
         // Device-native min/max is pushed unsolicited about hourly; reading it here
         // lets Refresh populate it without waiting for the next automatic report
-        [FC11_MAX_TEMP, FC11_MIN_TEMP, FC11_MAX_HUMI, FC11_MIN_HUMI].each { int a ->
+        [FC11_MAX_TEMP, FC11_MIN_TEMP, FC11_PREV_TEMP, FC11_MAX_HUMI, FC11_MIN_HUMI, FC11_PREV_HUMI].each { int a ->
             cmds += zigbee.readAttribute(CLUSTER_FC11, a, FC11_MFG_DR2, 200)
         }
     }
     sendZigbeeCommands(cmds)
 }
+
 
 // Re-publish the last readings using the current preferences. Uses the stored raw (pre-offset)
 // values; does not touch min/max, Last Reading or the reading counter.
@@ -1027,7 +1041,9 @@ private void parseFC11Attr(int attrInt, String hexVal, String encoding = null) {
         logInfo "FC11 ${name} = ${display}"
 
     } else if (attrInt == FC11_PREV_TEMP) {
-        logInfo "FC11 0x200A ref temp = ${formatTemp(signed / 100.0)}"
+        String display = formatTemp(signed / 100.0)
+        sendEvent(name: 'Device Temp Avg', value: display, descriptionText: "Device Temp Avg = ${display}")
+        logInfo "FC11 Device Temp Avg = ${display}"
 
     } else if (attrInt == FC11_MAX_HUMI || attrInt == FC11_MIN_HUMI) {
         String name = attrInt == FC11_MAX_HUMI ? 'Device Humidity Max' : 'Device Humidity Min'
@@ -1036,7 +1052,9 @@ private void parseFC11Attr(int attrInt, String hexVal, String encoding = null) {
         logInfo "FC11 ${name} = ${display}"
 
     } else if (attrInt == FC11_PREV_HUMI) {
-        logInfo "FC11 0x200D ref humidity = ${roundTo(raw / 100.0, 0).intValue()}%"
+        String display = "${roundTo(raw / 100.0, 0).intValue()}%"
+        sendEvent(name: 'Device Humidity Avg', value: display, descriptionText: "Device Humidity Avg = ${display}")
+        logInfo "FC11 Device Humidity Avg = ${display}"
 
     } else if (attrInt == FC11_REMOTE_SELECT) {
         remoteSelectReported(raw)
@@ -1797,7 +1815,8 @@ private void initVars(boolean fullInit) {
         sendEvent(name: 'Humidity Max',         value: '--')
         if (isModelDR2()) {
             // Device-native min/max: '--' keeps them visible until the device's hourly report
-            ['Device Temp Max', 'Device Temp Min', 'Device Humidity Max', 'Device Humidity Min'].each { String a ->
+            ['Device Temp Max', 'Device Temp Min', 'Device Temp Avg',
+             'Device Humidity Max', 'Device Humidity Min', 'Device Humidity Avg'].each { String a ->
                 sendEvent(name: a, value: '--', descriptionText: 'Waiting for device report')
             }
             sendEvent(name: 'lcdTempUnit', value: '--')
