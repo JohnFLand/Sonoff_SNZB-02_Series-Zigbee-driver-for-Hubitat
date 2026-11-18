@@ -1,7 +1,7 @@
 # Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
 **Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
-**Driver version:** 1.2.1  
+**Driver version:** 1.3.1  
 **Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors  
 **Manufacturer strings:** `SONOFF` or `eWeLink`
 
@@ -178,6 +178,7 @@ not flagged quickly.
 |---|---|
 | `Device Temp Max` / `Device Temp Min` | The sensor's own 24-hour temperature extremes, as shown on its LCD. Pushed by the sensor about hourly; also read on Refresh |
 | `Device Humidity Max` / `Device Humidity Min` | The sensor's own 24-hour humidity extremes |
+| `Device Temp Avg` / `Device Humidity Avg` | The sensor's own average temperature and humidity, apparently over the same 24 hours. Pushed with the min/max about hourly; also read on Refresh |
 | `comfortTempMin` / `comfortTempMax` | Comfort temperatures stored in the sensor (❄️ below the minimum, 🔥 above the maximum), read back after each Save |
 | `comfortHumidityMin` / `comfortHumidityMax` | Comfort humidity limits stored in the sensor, % |
 | `lcdTempUnit` | `Celsius` or `Fahrenheit` — the unit the LCD is actually using, read back after each Save |
@@ -188,7 +189,13 @@ not flagged quickly.
 
 The Hubitat-tracked min/max accumulates from install or the last reset. The device's own
 24-hour values are kept by the sensor's firmware and can only be reset with a ~10-second hold
-of its button.
+of its button. Writing new values into them over Zigbee does not work: on firmware 1.0.2 the
+sensor answers "write accepted" but keeps its min/max unchanged (tested in 1.3.0).
+
+The averages (FC11 `0x200A` / `0x200D`) were previously logged as unexplained "reference"
+values. Zigbee2MQTT names the same attributes "average" on Sonoff's SS-Z2N sensor, and on the
+SNZB-02DR2 they always fall between the sensor's own min and max and change slowly, as a
+24-hour average would. Sonoff has not documented them.
 
 ### SNZB-02M
 | Attribute | Description |
@@ -434,9 +441,9 @@ No. The sensor only receives a number for each slot and only draws numbers. Nume
 - **SNZB-02M settings are read-only.** Its comfort thresholds and calibration are read without
   Sonoff's manufacturer code; this driver does not change them. If those attributes stay empty
   after a Refresh with the sensor awake, please report it.
-- **SNZB-02DR2 open questions.** Several of its private-cluster attributes (`0x200A`, `0x200D`,
-  `0x200E`) are still unexplained, and it is not yet known when its own 24-hour min/max window
-  resets. See the SNZB-02DR2 driver's README for the research notes.
+- **SNZB-02DR2 open questions.** Attribute `0x200E` is still unexplained, it is not yet known when
+  the sensor's own 24-hour min/max window resets. See the SNZB-02DR2 driver's README for the
+  research notes.
 - **SNZB-02DR2 remote display.** The firmware 1.0.5 method (and so EXT2) is untested, and so
   is remote humidity on firmware 1.0.4. Whether the sensor keeps showing a remote value
   indefinitely, or blanks it when no new value arrives, is not yet known.
@@ -477,9 +484,10 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 | `0x2003` | INT16, °C × 100 | 02DR2 (R/W), 02M (R) | Temperature calibration (02DR2: written by **Apply offsets in the sensor**) |
 | `0x2004` | INT16, % × 100 | 02DR2 (R/W), 02M (R) | Humidity calibration (02DR2: written by **Apply offsets in the sensor**) |
 | `0x2007` | INT16, hPa × 100 | 02M (R) | Pressure calibration |
-| `0x2008` / `0x2009` | INT16, °C × 100 | 02DR2 (R) | Device 24-hour temperature max / min |
-| `0x200B` / `0x200C` | UINT16, % × 100 | 02DR2 (R) | Device 24-hour humidity max / min |
-| `0x200A` / `0x200D` | — | 02DR2 | Reference values, meaning unknown (logged only) |
+| `0x2008` / `0x2009` | °C × 100 (the sensor declares `0x2008` as UINT16 and `0x2009` as INT16; both read as signed) | 02DR2 (R; writes are acknowledged but ignored) | Device 24-hour temperature max / min |
+| `0x200B` / `0x200C` | UINT16, % × 100 | 02DR2 (R; writes are acknowledged but ignored) | Device 24-hour humidity max / min |
+| `0x200A` | INT16, °C × 100 | 02DR2 (R) | Device 24-hour average temperature (`Device Temp Avg`) |
+| `0x200D` | UINT16, % × 100 | 02DR2 (R) | Device 24-hour average humidity (`Device Humidity Avg`) |
 | `0x600E` | UINT8 | 02DR2 (R/W) | Remote display. Before 1.0.5: 0 = built-in sensor, 1 = external value. 1.0.5 and later: 0 = unbound, 1 = using, 2 = offline |
 | `0x600D` | INT16, °C × 100 | 02DR2 (R/W) | Remote temperature on EXT1 (before 1.0.5) |
 | `0x6018` | UINT16, % × 100 | 02DR2 (R/W) | Remote humidity on EXT1 (before 1.0.5; needs 1.0.4) |
@@ -491,6 +499,8 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.3.1 | 2026-11-17 | Removed the experimental **Try Reset Device Min Max** command: on firmware 1.0.2 the sensor answers "write accepted" but keeps its own min/max unchanged, so they can only be reset with the button hold. |
+| 1.3.0 | 2026-11-17 | SNZB-02DR2: new attributes `Device Temp Avg` and `Device Humidity Avg` (FC11 `0x200A` / `0x200D`, previously logged as unexplained reference values). New experimental command **Try Reset Device Min Max**, to find out whether the sensor's own min/max can be reset over Zigbee. |
 | 1.2.1 | 2026-11-17 | Remote display: the highest temperature sent is now 98.9 (was 99.9); the screen shows `HHH` from 99.0 upward. Driver namespace changed from `v. 1.0.0` to `JohnFLand` (it now stays fixed across versions): update by importing or pasting into the existing driver, not by adding a new one. If you did add a new one, switch each device's **Type** to it, then delete the old driver. |
 | 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9 (lowered to 98.9 in 1.2.1). |
 | 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognised instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
