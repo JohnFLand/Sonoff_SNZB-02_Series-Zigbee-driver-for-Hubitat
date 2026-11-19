@@ -1,7 +1,7 @@
 # Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
 **Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
-**Driver version:** 1.3.1  
+**Driver version:** 1.4.1  
 **Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors  
 **Manufacturer strings:** `SONOFF` or `eWeLink`
 
@@ -20,6 +20,7 @@ from the device and switches on the features that model has:
 | Temperature settings in °C or °F; temperature decimal places | ✓ | ✓ | ✓ |
 | Dew point and vapour pressure deficit (VPD) | ✓ | ✓ | ✓ |
 | Min/max with timestamps, daily auto-reset | ✓ | ✓ | ✓ |
+| Rolling 24-hour and 2–365-day averages of temperature and humidity | ✓ | ✓ | ✓ |
 | `healthStatus` and `sensorStatus` | ✓ | ✓ | ✓ |
 | Comfort thresholds and LCD unit written to the device | | ✓ | |
 | Device's own 24-hour min/max (as on its LCD) | | ✓ | |
@@ -159,6 +160,9 @@ steps (0.018 °F). As a temperature difference it is converted without the +32 (
 | `battery` | Battery level %. A Refresh on the SNZB-02P / 02D / 02DR2 also reads the battery voltage and estimates a percentage from it (2.1–3.0 V) |
 | `dewPoint` | Dew point, calculated from temperature and humidity |
 | `vpd` | Vapour pressure deficit in kPa, calculated from temperature and humidity |
+| `temperatureAvg24h` / `humidityAvg24h` | Time-weighted average over the last 24 hours (humidity to 0.1 %). See **Averages** |
+| `temperatureAvgLongTerm` / `humidityAvgLongTerm` | Time-weighted average over the last N days, N set by **Averaging period (days)**. The value is the average, not the period's length; the length is shown in `averagesInfo` |
+| `averagesInfo` | How much data each average covers, e.g. `24 h average: 24.0 of 24 hours; 7-day average: 2.5 of 7 days (collecting since 2026-11-19 11:30)` |
 | `Temperature Min` / `Temperature Max` | Lowest / highest temperature since the last reset, with the time it was recorded, e.g. `72.4°F @ 11-07 14:22` |
 | `Humidity Min` / `Humidity Max` | Lowest / highest humidity since the last reset, with the time it was recorded |
 | `Min/Max Reset` | Time of the last reset (manual or automatic) |
@@ -234,6 +238,8 @@ Model-specific preferences appear only for that model.
 | Humidity offset | all | 0.0 % | −20–20 % | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor |
 | Pressure offset | 02M | 0.0 hPa | −50–50 hPa | Added to every reading in Hubitat; always entered in hPa |
 | Calculate dew point and VPD | all | on | | Turning it off removes `dewPoint` and `vpd` |
+| Calculate averages | all | on | | Rolling temperature and humidity averages. Turning it off removes the average attributes and the stored totals |
+| Averaging period (days) | all | 7 | 2–365 | Length of the longer average |
 | LCD temperature unit | 02DR2 | Leave unchanged | Leave unchanged / °C / °F | Unit on the sensor's screen |
 | Comfort temperature minimum | 02DR2 | 18.0 °C | −10–60 °C (14–140 °F) | ❄️ shown below this value. Written to the sensor |
 | Comfort temperature maximum | 02DR2 | 26.0 °C | −10–60 °C (14–140 °F) | 🔥 shown above this value. Written to the sensor |
@@ -295,6 +301,7 @@ on firmware 1.0.2).
 | **Configure** | Detects the model, sends the reporting configuration (and SNZB-02DR2 settings), then reads current values and the model's device settings. Wake the sensor first. |
 | **Refresh** | Reads current values and the model's device settings; on the SNZB-02DR2 also its own 24-hour min/max. Wake the sensor first. |
 | **Reset Min/Max** | Clears the Hubitat-tracked min/max and the readings counter. Also run automatically by the daily auto-reset. Does not affect the SNZB-02DR2's own 24-hour values. |
+| **Reset Averages** | Clears the rolling averages and their stored totals, and starts collecting again from the current readings. Separate from **Reset Min/Max**, and not affected by the daily auto-reset. |
 | **Initialize** | Clears all driver state, including the min/max, sets `sensorStatus` to "Waiting for first report…", then runs Configure. Wake the sensor first. Not needed just to apply preference changes — Save Preferences does that. |
 | **Set Remote Temperature** | SNZB-02DR2 only. Shows a temperature on the LCD's EXT line. Parameters: the temperature, in the hub's scale, and the slot (`EXT1`, the default, or `EXT2`). No need to wake the sensor. |
 | **Set Remote Humidity** | SNZB-02DR2 only. Shows a humidity (%) on the EXT line. Same parameters. Needs firmware 1.0.4 or later. |
@@ -379,6 +386,32 @@ reading arrives, using the offset-corrected values.
 - **Dew point** uses the Magnus formula (a = 17.62, b = 243.12 °C).
 - **VPD** is the saturation vapour pressure (Tetens: 0.6108 × e^(17.27·T / (T + 237.3)) kPa)
   multiplied by (1 − RH/100), shown in kPa to 0.01.
+
+## Averages
+
+The driver keeps two rolling averages of temperature and humidity: over the last 24 hours, and
+over the last N days (**Averaging period (days)**, 2 to 365, default 7). They work on every model
+and are calculated in Hubitat from the readings the sensor sends, using the offset-corrected
+values; the SNZB-02DR2's own `Device Temp Avg` / `Device Humidity Avg` are separate.
+
+- **Time-weighted.** The sensors report when the value changes by the reporting threshold, plus a
+  heartbeat at the max reporting interval. Each reading counts for as long as it stayed current,
+  so a period with many reports (a changing temperature) does not outweigh a steady one.
+- **Gaps are left out.** A reading counts for at most twice the max reporting interval (at least
+  30 minutes). If the sensor goes silent, its last value is not stretched over the gap.
+- **Exact windows.** Totals are stored per hour for the last day and per day for the longer
+  period. Each average covers exactly 24 hours or N days back from now; the oldest hour or day in
+  the window is counted in proportion to the part of it that still falls inside.
+- **Coverage.** Until enough data has been collected, `averagesInfo` shows how much each average
+  covers (for example `2.5 of 7 days`). Averages start when this version is installed; the hub
+  keeps too little event history to work them out from past readings.
+- **Updates.** The averages are updated with every reading and once an hour, so the 24-hour window
+  moves on even when the readings are steady. After updating the driver code, click **Save
+  Preferences** once to start the hourly update.
+- **Offsets.** A reading is stored with the offset in force when it arrived; changing an offset
+  affects later readings only. Use **Reset Averages** to start again with the new offset.
+- **Storage.** About 20 KB of driver state per device for a 365-day period (totals for at least 31
+  days are always kept, so lengthening the period later uses data already collected).
 
 ---
 
@@ -499,6 +532,8 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.4.1 | 2026-11-19 | Renamed `temperatureAvgPeriod` / `humidityAvgPeriod` to `temperatureAvgLongTerm` / `humidityAvgLongTerm`, so the name does not read as the period's length. The old attributes are removed when you click **Save Preferences**. |
+| 1.4.0 | 2026-11-19 | Rolling time-weighted averages of temperature and humidity on every model: `temperatureAvg24h`, `humidityAvg24h`, `temperatureAvgPeriod`, `humidityAvgPeriod` and `averagesInfo`. New preferences **Calculate averages** and **Averaging period (days)** (2–365, default 7); new command **Reset Averages**. |
 | 1.3.1 | 2026-11-17 | Removed the experimental **Try Reset Device Min Max** command: on firmware 1.0.2 the sensor answers "write accepted" but keeps its own min/max unchanged, so they can only be reset with the button hold. |
 | 1.3.0 | 2026-11-17 | SNZB-02DR2: new attributes `Device Temp Avg` and `Device Humidity Avg` (FC11 `0x200A` / `0x200D`, previously logged as unexplained reference values). New experimental command **Try Reset Device Min Max**, to find out whether the sensor's own min/max can be reset over Zigbee. |
 | 1.2.1 | 2026-11-17 | Remote display: the highest temperature sent is now 98.9 (was 99.9); the screen shows `HHH` from 99.0 upward. Driver namespace changed from `v. 1.0.0` to `JohnFLand` (it now stays fixed across versions): update by importing or pasting into the existing driver, not by adding a new one. If you did add a new one, switch each device's **Type** to it, then delete the old driver. |
