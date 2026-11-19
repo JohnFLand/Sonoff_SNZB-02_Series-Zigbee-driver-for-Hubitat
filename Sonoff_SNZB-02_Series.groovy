@@ -40,6 +40,15 @@
  *  Licensed under the Apache License, Version 2.0
  *
  *  Changelog:
+ *    1.4.1  2026-11-19  Renamed temperatureAvgPeriod / humidityAvgPeriod to temperatureAvgLongTerm /
+ *                       humidityAvgLongTerm, so the name does not read as the period's length. The old
+ *                       attributes are removed on Save Preferences.
+ *    1.4.0  2026-11-19  Rolling averages (all models): temperatureAvg24h / humidityAvg24h over the last
+ *                       24 hours (to the hour) and temperatureAvgPeriod / humidityAvgPeriod over the last
+ *                       N days (to the day; N = 2 to 365, default 7), with averagesInfo showing how much
+ *                       data each covers. Time-weighted, so readings count for as long as they were
+ *                       current. New preferences "Calculate averages" and "Averaging period (days)";
+ *                       new command Reset Averages (separate from Reset Min/Max).
  *    1.3.1  2026-11-17  Removed the experimental Try Reset Device Min Max command. On firmware 1.0.2
  *                       the sensor answers "write accepted" but keeps its own min/max unchanged, so
  *                       they can only be reset with the button hold.
@@ -98,8 +107,8 @@
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 
-@Field static final String VERSION    = '1.3.1'
-@Field static final String TIME_STAMP = '2026-11-17'
+@Field static final String VERSION    = '1.4.1'
+@Field static final String TIME_STAMP = '2026-11-19'
 
 // ── Clusters ─────────────────────────────────────────────────────────────────
 @Field static final Integer CLUSTER_BASIC     = 0x0000
@@ -140,6 +149,10 @@ import hubitat.zigbee.zcl.DataType
 @Field static final Map REMOTE_RANGE = [legacyT: [-50.0, 125.0], legacyH: [0.0, 100.0],
                                         sourcesT: [-20.0, 60.0], sourcesH: [0.0, 99.9]]
 @Field static final int REMOTE_MAX_ATTEMPTS = 10     // automatic re-sends before giving up
+@Field static final int AVG_DAYS_MIN = 2
+@Field static final int AVG_DAYS_MAX = 365
+@Field static final List<String> AVG_ATTRS = ['temperatureAvg24h', 'temperatureAvgLongTerm', 'humidityAvg24h',
+                                              'humidityAvgLongTerm', 'averagesInfo']
 @Field static final BigDecimal LCD_EXT_MAX = 98.9    // the EXT line shows "HHH" from 99.0 upward (in the LCD's unit)
 
 // The SNZB-02DR2 needs Sonoff's manufacturer code on FC11; the SNZB-02M is read without it
@@ -200,6 +213,13 @@ metadata {
         attribute 'dewPoint',               'number'
         attribute 'vpd',                    'number'   // vapour pressure deficit, kPa
 
+        // Rolling time-weighted averages (all models)
+        attribute 'temperatureAvg24h',      'number'
+        attribute 'temperatureAvgLongTerm', 'number'   // over the averaging period (days)
+        attribute 'humidityAvg24h',         'number'
+        attribute 'humidityAvgLongTerm',    'number'   // over the averaging period (days)
+        attribute 'averagesInfo',           'string'
+
         // Running min/max tracked by the driver
         attribute 'Humidity Max',           'string'
         attribute 'Humidity Min',           'string'
@@ -238,6 +258,7 @@ metadata {
         attribute 'sensorStatus',           'string'
 
         command 'resetMinMax', [[name: 'Reset the Hubitat-tracked min/max temperature and humidity values']]
+        command 'resetAverages', [[name: 'Clear the rolling temperature and humidity averages and start collecting again']]
         command 'initialize',  [[name: 'Re-initialize driver state and re-configure device reporting']]
 
         // SNZB-02DR2 only
@@ -408,6 +429,19 @@ metadata {
               description: 'Publish dew point and vapour pressure deficit, calculated from temperature and humidity.',
               defaultValue: true
 
+        input name: 'avgEnable',
+              type: 'bool',
+              title: '<b>Calculate averages</b>',
+              description: 'Publish rolling time-weighted averages of temperature and humidity: over the last 24 hours and over the averaging period below.',
+              defaultValue: true
+
+        input name: 'avgDays',
+              type: 'number',
+              title: '<b>Averaging period (days)</b>',
+              description: 'Length of the longer rolling average: today so far plus the previous days, 2 to 365. Default 7.',
+              defaultValue: 7,
+              range: '2..365'
+
         if (isModelDR2()) {
             input name: 'offsetsInDevice',
                   type: 'bool',
@@ -523,6 +557,8 @@ def updated() {
     if (derivedEnable == false) {
         ['dewPoint', 'vpd'].each { String a -> try { device.deleteCurrentState(a) } catch (ignored) { } }
     }
+    scheduleAverages()
+    if (avgEnabled()) { avgPublish(now()) }   // shows the effect of a new averaging period at once
 
     // Show the effect of new offsets, units, precision and pressure unit straight away
     republishCurrent()
@@ -557,6 +593,7 @@ def configure() {
     cmds += fc11SettingsReadCmds()
 
     scheduleHealthCheck()   // also (re)schedules the daily auto-reset
+    scheduleAverages()
     snapshotTempPrefs()
     sendZigbeeCommands(cmds)
 }
@@ -628,6 +665,205 @@ def resetMinMax() {
     sendEvent(name: 'Temperature Max',      value: '--', descriptionText: 'Max temperature reset')
     sendEvent(name: 'Humidity Min',         value: '--', descriptionText: 'Min humidity reset')
     sendEvent(name: 'Humidity Max',         value: '--', descriptionText: 'Max humidity reset')
+}
+
+// ── Rolling averages ──────────────────────────────────────────────────────────
+// Time-weighted: each reading counts for as long as it stayed current, but for no longer than
+// twice the maximum reporting interval (at least 30 minutes), so a sensor that goes silent does
+// not stretch its last value over the gap. Totals are kept per hour for the last 24 hours
+// (state.avgHours, keyed by epoch hour) and per local calendar day (state.avgToday, then
+// state.avgDays for finished days). Each bucket holds
+// [temperature °C × seconds, seconds of temperature, humidity % × seconds, seconds of humidity].
+// Windows are exactly 24 hours and exactly N days: the current hour (day) so far, the full ones
+// before it, and the part of the oldest hour (day) that still falls inside the window, counted in
+// proportion (as if that hour or day had been even throughout).
+
+private boolean avgEnabled() { return settings?.avgEnable != false }
+
+private int avgDays() { return Math.max(AVG_DAYS_MIN, Math.min(AVG_DAYS_MAX, safeInt(settings?.avgDays, 7))) }
+
+// Days of totals kept besides today: the period, but at least 31, so a longer period chosen
+// later has data
+private int avgDaysKept() { return Math.max(avgDays(), 31) }
+
+private void scheduleAverages() {
+    unschedule('averagesTick')
+    if (!avgEnabled()) {
+        ['avgHours', 'avgToday', 'avgDays', 'avgLastT', 'avgLastH', 'avgSince'].each { String k -> state.remove(k) }
+        AVG_ATTRS.each { String a -> try { device.deleteCurrentState(a) } catch (ignored) { } }
+        return
+    }
+    if (state.avgSince == null) { state.avgSince = now() }
+    // Hourly, so the 24-hour window moves on even when the readings are steady
+    schedule("${new Random().nextInt(59)} 1 * * * ? *", 'averagesTick')
+}
+
+def averagesTick() {
+    if (avgEnabled()) { avgPublish(now()) }
+}
+
+def resetAverages() {
+    logInfo 'Resetting averages'
+    long t = now()
+    ['avgHours', 'avgToday', 'avgDays'].each { String k -> state.remove(k) }
+    // Keep the current readings, counted from now
+    ['T', 'H'].each { String type ->
+        Map last = state["avgLast${type}"] as Map
+        if (last) { state["avgLast${type}"] = [v: last.v, at: last.at, upTo: t] }
+    }
+    state.avgSince = t
+    AVG_ATTRS.each { String a -> try { device.deleteCurrentState(a) } catch (ignored) { } }
+    String ts = new Date(t).format('yyyy-MM-dd HH:mm', location.timeZone)
+    sendEvent(name: 'averagesInfo', value: "Collecting since ${ts}", descriptionText: "Averages reset at ${ts}")
+}
+
+// A new reading (type 'T' or 'H', offset-corrected; temperature in °C)
+private void avgReading(String type, double value) {
+    if (!avgEnabled()) { return }
+    long t = now()
+    if (state.avgSince == null) { state.avgSince = t }
+    avgCommit(type, t)
+    state["avgLast${type}"] = [v: value, at: t, upTo: t]
+    avgPublish(t)
+}
+
+// Credits the last reading of one type for the time since it was last credited, up to its cap
+private void avgCommit(String type, long upTo) {
+    Map last = state["avgLast${type}"] as Map
+    if (!last) { return }
+    long from = last.upTo as long
+    long end = Math.min(upTo, (last.at as long) + avgCapMs(type))
+    if (end <= from) { return }
+    avgCredit(type, last.v as double, from, end)
+    state["avgLast${type}"] = [v: last.v, at: last.at, upTo: end]
+}
+
+private long avgCapMs(String type) {
+    int maxSec = type == 'T' ? safeInt(maxReportTemp, 3600) : safeInt(maxReportHumi, 3600)
+    return Math.max(2L * maxSec, 1800L) * 1000L
+}
+
+// Adds value × time to the hour and day buckets, split at hour boundaries and local midnight
+private void avgCredit(String type, double v, long from, long end) {
+    int i = type == 'T' ? 0 : 2
+    Map hours = (state.avgHours ?: [:]) as Map
+    long t = from
+    while (t < end) {
+        long hour = t.intdiv(3600000L) as long
+        long stop = Math.min(end, Math.min((hour + 1L) * 3600000L, avgNextMidnight(t)))
+        double secs = (stop - t) / 1000.0
+        hours[hour.toString()] = avgAdd(hours[hour.toString()] as List, i, v, secs)
+        avgAddDay(avgDayKey(t), i, v, secs)
+        t = stop
+    }
+    long oldest = (end.intdiv(3600000L) as long) - 25L
+    state.avgHours = hours.findAll { k, b -> (k as long) > oldest }
+}
+
+private static List avgAdd(List b, int i, double v, double secs) {
+    List out = b ? new ArrayList(b) : [0.0d, 0.0d, 0.0d, 0.0d]
+    out[i]     = Math.round(((out[i] as double) + v * secs) * 100.0d) / 100.0d
+    out[i + 1] = Math.round(((out[i + 1] as double) + secs) * 100.0d) / 100.0d
+    return out
+}
+
+private void avgAddDay(String key, int i, double v, double secs) {
+    Map today = state.avgToday as Map
+    if (!today || (today.key as String) == key) {
+        state.avgToday = [key: key, b: avgAdd(today?.b as List, i, v, secs)]
+    } else if (key > (today.key as String)) {
+        // A new day: file the finished one and drop days older than the kept range
+        Map days = (state.avgDays ?: [:]) as Map
+        days[today.key as String] = today.b
+        String cutoff = avgDayKey(now() - (long) (avgDaysKept() + 1) * 86400000L)
+        state.avgDays = days.findAll { k, b -> (k as String) > cutoff }
+        state.avgToday = [key: key, b: avgAdd(null, i, v, secs)]
+    } else {
+        Map days = (state.avgDays ?: [:]) as Map
+        days[key] = avgAdd(days[key] as List, i, v, secs)
+        state.avgDays = days
+    }
+}
+
+private String avgDayKey(long t) { return new Date(t).format('yyyy-MM-dd', location.timeZone) }
+
+private long avgStartOfDay(long t) {
+    Calendar c = Calendar.getInstance(location.timeZone)
+    c.setTimeInMillis(t)
+    c.set(Calendar.HOUR_OF_DAY, 0)
+    c.set(Calendar.MINUTE, 0)
+    c.set(Calendar.SECOND, 0)
+    c.set(Calendar.MILLISECOND, 0)
+    return c.getTimeInMillis()
+}
+
+private long avgNextMidnight(long t) {
+    Calendar c = Calendar.getInstance(location.timeZone)
+    c.setTimeInMillis(avgStartOfDay(t))
+    c.add(Calendar.DATE, 1)
+    return c.getTimeInMillis()
+}
+
+// Sums buckets, each [bucket, weight]
+private static List avgSum(Collection weighted) {
+    double[] s = [0.0d, 0.0d, 0.0d, 0.0d] as double[]
+    weighted.each { pair ->
+        List b = (pair as List)[0] as List
+        double w = (pair as List)[1] as double
+        if (b && w > 0) { (0..3).each { int j -> s[j] += (((b[j] ?: 0) as double) * w) } }
+    }
+    return s as List
+}
+
+// Brings both readings up to date, then publishes the averages and how much data they cover
+private void avgPublish(long t) {
+    avgCommit('T', t)
+    avgCommit('H', t)
+    // Last 24 hours: this hour so far, the 23 full hours before it, and the matching part of the hour before those
+    long hourNow = t.intdiv(3600000L) as long
+    double hourDone = (t - hourNow * 3600000L) / 3600000.0d
+    List hw = []
+    ((state.avgHours ?: [:]) as Map).each { k, b ->
+        long hk = k as long
+        if (hk > hourNow - 24L) { hw << [b, 1.0d] }
+        else if (hk == hourNow - 24L) { hw << [b, 1.0d - hourDone] }
+    }
+    List h24 = avgSum(hw)
+
+    // Last N days: today so far, the N-1 full days before it, and the matching part of the day before those
+    int n = avgDays()
+    long dayStart = avgStartOfDay(t)
+    double dayDone = (t - dayStart) / (double) (avgNextMidnight(t) - dayStart)
+    String todayKey = avgDayKey(t)
+    String firstFull = avgDayKey(dayStart - (long) (n - 1) * 86400000L + 43200000L)   // noon avoids DST edges
+    String partial = avgDayKey(dayStart - (long) n * 86400000L + 43200000L)
+    Map dayMap = ((state.avgDays ?: [:]) as Map) + (state.avgToday ? [((state.avgToday as Map).key as String): (state.avgToday as Map).b] : [:])
+    List dw = []
+    dayMap.each { k, b ->
+        String dk = k as String
+        if (dk >= firstFull && dk <= todayKey) { dw << [b, 1.0d] }
+        else if (dk == partial) { dw << [b, 1.0d - dayDone] }
+    }
+    List per = avgSum(dw)
+
+    if ((h24[1] as double) > 0) { avgEvent('temperatureAvg24h', tempOut((h24[0] as double) / (h24[1] as double)), tempUnit()) }
+    if ((h24[3] as double) > 0) { avgEvent('humidityAvg24h', roundTo((h24[2] as double) / (h24[3] as double), 1), '%') }
+    if ((per[1] as double) > 0) { avgEvent('temperatureAvgLongTerm', tempOut((per[0] as double) / (per[1] as double)), tempUnit()) }
+    if ((per[3] as double) > 0) { avgEvent('humidityAvgLongTerm', roundTo((per[2] as double) / (per[3] as double), 1), '%') }
+
+    if ((h24[1] as double) > 0 || (per[1] as double) > 0) {
+        BigDecimal hrs  = roundTo(Math.min(24.0d, (h24[1] as double) / 3600.0), 1)
+        BigDecimal days = roundTo(Math.min((double) n, (per[1] as double) / 86400.0), 1)
+        String since = state.avgSince ? new Date(state.avgSince as long).format('yyyy-MM-dd HH:mm', location.timeZone) : '?'
+        String info = "24 h average: ${hrs} of 24 hours; ${n}-day average: ${days} of ${n} days (collecting since ${since})"
+        if (device.currentValue('averagesInfo') != info) { sendEvent(name: 'averagesInfo', value: info) }
+    }
+}
+
+private void avgEvent(String name, BigDecimal value, String unit) {
+    if (device.currentValue(name) != null && (device.currentValue(name) as BigDecimal) == value) { return }
+    sendEvent(name: name, value: value, unit: unit, descriptionText: "${name} = ${value}${unit}")
+    logDebug "${name} = ${value}${unit}"
 }
 
 // ── Auto-reset scheduling ─────────────────────────────────────────────────────
@@ -803,6 +1039,7 @@ private void publishTemperature(boolean fresh) {
     if (fresh) {
         markReporting()
         updateMinMax('temperature', tempAdjusted)
+        avgReading('T', tempAdjusted)
         String ts = new Date().format('yyyy-MM-dd HH:mm:ss', location.timeZone)
         sendEvent(name: 'Last Reading', value: ts, descriptionText: "Last reading at ${ts}")
     }
@@ -839,7 +1076,7 @@ private void publishHumidity(boolean fresh) {
               descriptionText: "${device.displayName} humidity is ${display}%",
               type: fresh ? 'physical' : 'digital')
     logInfo "humidity ${display}%${fresh ? '' : ' (re-published)'}"
-    if (fresh) { updateMinMax('humidity', humiAdjusted); markReporting() }
+    if (fresh) { updateMinMax('humidity', humiAdjusted); markReporting(); avgReading('H', humiAdjusted) }
 }
 
 // Current adjusted values (raw + offset), or null if no reading has been received yet
@@ -1632,8 +1869,9 @@ private void ensureSensorStatus() {
 private void removeLegacyState() {
     unschedule('commandTimeout')
     ['pingTime', 'lastTempC', 'lastHumi'].each { String k -> state.remove(k) }
-    // rtt (Ping) and the SNZB-02DR2 driver's comfortHumiMin/Max were replaced
-    ['rtt', 'comfortHumiMin', 'comfortHumiMax'].each { String a ->
+    // rtt (Ping) and the SNZB-02DR2 driver's comfortHumiMin/Max were replaced; the 1.4.0
+    // period averages were renamed to temperatureAvgLongTerm / humidityAvgLongTerm in 1.4.1
+    ['rtt', 'comfortHumiMin', 'comfortHumiMax', 'temperatureAvgPeriod', 'humidityAvgPeriod'].each { String a ->
         try { device.deleteCurrentState(a) } catch (ignored) { }
     }
     // The SNZB-02DR2 driver stored comfortTempMin/Max as text such as '64.4°F'; they are
