@@ -1,33 +1,43 @@
 # Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
 **Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
-**Driver version:** 1.4.1  
-**Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors  
+**Driver version:** 1.4.2  
+**Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02LD, SNZB-02DR2 and SNZB-02M Zigbee sensors  
 **Manufacturer strings:** `SONOFF` or `eWeLink`
 
 ---
 
 ## Overview
 
-One Hubitat driver for four Sonoff battery-powered Zigbee sensors. It recognises the model
+One Hubitat driver for five Sonoff battery-powered Zigbee sensors. It recognizes the model
 from the device and switches on the features that model has:
 
-| Feature | SNZB-02P / 02D | SNZB-02DR2 | SNZB-02M |
-|---|:-:|:-:|:-:|
-| Temperature, humidity, battery | ✓ | ✓ | ✓ |
-| Reporting intervals and thresholds set from Hubitat | ✓ | ✓ | ✓ |
-| Hubitat-side temperature and humidity offsets | ✓ | ✓ | ✓ |
-| Temperature settings in °C or °F; temperature decimal places | ✓ | ✓ | ✓ |
-| Dew point and vapour pressure deficit (VPD) | ✓ | ✓ | ✓ |
-| Min/max with timestamps, daily auto-reset | ✓ | ✓ | ✓ |
-| Rolling 24-hour and 2–365-day averages of temperature and humidity | ✓ | ✓ | ✓ |
-| `healthStatus` and `sensorStatus` | ✓ | ✓ | ✓ |
-| Comfort thresholds and LCD unit written to the device | | ✓ | |
-| Device's own 24-hour min/max (as on its LCD) | | ✓ | |
-| Readings sent from Hubitat shown on its LCD (EXT1 / EXT2) | | ✓ | |
-| Offsets applied in the sensor, so its LCD matches Hubitat (optional) | | ✓ | |
-| Comfort thresholds and calibration read from the device | | | ✓ |
-| Barometric pressure (0.1 hPa, selectable unit) | | | ✓ |
+| Feature | SNZB-02P / 02D | SNZB-02LD | SNZB-02DR2 | SNZB-02M |
+|---|:-:|:-:|:-:|:-:|
+| Temperature and battery | ✓ | ✓ | ✓ | ✓ |
+| Humidity | ✓ | | ✓ | ✓ |
+| Reporting intervals and thresholds set from Hubitat | ✓ | ✓ | ✓ | ✓ |
+| Hubitat-side temperature offset | ✓ | ✓ | ✓ | ✓ |
+| Hubitat-side humidity offset | ✓ | | ✓ | ✓ |
+| Temperature settings in °C or °F; temperature decimal places | ✓ | ✓ | ✓ | ✓ |
+| Dew point and vapor pressure deficit (VPD) | ✓ | | ✓ | ✓ |
+| Min/max with timestamps, daily auto-reset | ✓ | ✓ (temperature) | ✓ | ✓ |
+| Rolling 24-hour and 2–365-day averages | ✓ | ✓ (temperature) | ✓ | ✓ |
+| `healthStatus` and `sensorStatus` | ✓ | ✓ | ✓ | ✓ |
+| Comfort thresholds and LCD unit written to the device | | | ✓ | |
+| Device's own 24-hour min/max (as on its LCD) | | | ✓ | |
+| Readings sent from Hubitat shown on its LCD (EXT1 / EXT2) | | | ✓ | |
+| Offsets applied in the sensor, so its LCD matches Hubitat (optional) | | | ✓ | |
+| Comfort thresholds and calibration read from the device | | | | ✓ |
+| Barometric pressure (0.1 hPa, selectable unit) | | | | ✓ |
+
+**SNZB-02LD.** The SNZB-02LD is Sonoff's probe thermometer with an LCD. It measures temperature
+through its 1.5 m probe (−40 to 115 °C, within the driver's sanity limits) and has no humidity
+sensor, so the driver leaves humidity out on it: humidity reporting is not configured or read,
+the humidity settings and **Calculate dew point and VPD** do not appear in the preferences, and
+**Save Preferences** or **Configure** removes `humidity`, `Humidity Min` / `Max`, `dewPoint`,
+`vpd`, `humidityAvg24h` and `humidityAvgLongTerm` if they are present. The Relative Humidity
+capability is still declared (see **Model detection**).
 
 This driver replaces three separate drivers — **SNZB-02x** (1.5.0, for the SNZB-02P and
 SNZB-02D), **SNZB-02DR2** (1.13.0) and **SNZB-02M** (2.4.0). Those remain available but are
@@ -89,10 +99,10 @@ The model comes from the device's model string, recorded when it was paired:
 |---|---|
 | `SNZB-02DR2` | SNZB-02DR2 |
 | `SNZB-02M` | SNZB-02M |
-| `SNZB-02P`, `SNZB-02D` | SNZB-02P / SNZB-02D |
-| anything else | SNZB-02P / SNZB-02D, with a warning in the log |
+| `SNZB-02P`, `SNZB-02D`, `SNZB-02LD` | SNZB-02P / SNZB-02D / SNZB-02LD |
+| anything else | SNZB-02P / SNZB-02D / SNZB-02LD, with a warning in the log |
 
-If the model is not recognised, or you want to try a model's features on another sensor, set
+If the model is not recognized, or you want to try a model's features on another sensor, set
 **Device model** in the preferences. Save, then reopen the page to see that model's
 settings.
 
@@ -101,6 +111,9 @@ capabilities cannot vary by device. Only the SNZB-02M ever reports a pressure va
 SNZB-02P, 02D and 02DR2 sensors will appear in apps' pressure-sensor pickers. If that is a
 problem, comment out the `capability 'PressureMeasurement'` line and use the separate
 SNZB-02M driver for any SNZB-02M sensors.
+
+Likewise, **the Relative Humidity Measurement capability is declared for every model**, so an
+SNZB-02LD appears in apps' humidity-sensor pickers although it never reports humidity.
 
 ---
 
@@ -156,15 +169,15 @@ steps (0.018 °F). As a temperature difference it is converted without the +32 (
 | Attribute | Description |
 |---|---|
 | `temperature` | Current temperature, with the Hubitat temperature offset applied |
-| `humidity` | Current relative humidity in whole percent, with the Hubitat humidity offset applied (clamped to 0–100 %) |
-| `battery` | Battery level %. A Refresh on the SNZB-02P / 02D / 02DR2 also reads the battery voltage and estimates a percentage from it (2.1–3.0 V) |
-| `dewPoint` | Dew point, calculated from temperature and humidity |
-| `vpd` | Vapour pressure deficit in kPa, calculated from temperature and humidity |
-| `temperatureAvg24h` / `humidityAvg24h` | Time-weighted average over the last 24 hours (humidity to 0.1 %). See **Averages** |
+| `humidity` | Current relative humidity in whole percent, with the Hubitat humidity offset applied (clamped to 0–100 %). Not on the SNZB-02LD |
+| `battery` | Battery level %. A Refresh on the SNZB-02P / 02D / 02LD / 02DR2 also reads the battery voltage and estimates a percentage from it (2.1–3.0 V) |
+| `dewPoint` | Dew point, calculated from temperature and humidity. Not on the SNZB-02LD |
+| `vpd` | Vapor pressure deficit in kPa, calculated from temperature and humidity. Not on the SNZB-02LD |
+| `temperatureAvg24h` / `humidityAvg24h` | Time-weighted average over the last 24 hours (humidity to 0.1 %; no humidity on the SNZB-02LD). See **Averages** |
 | `temperatureAvgLongTerm` / `humidityAvgLongTerm` | Time-weighted average over the last N days, N set by **Averaging period (days)**. The value is the average, not the period's length; the length is shown in `averagesInfo` |
 | `averagesInfo` | How much data each average covers, e.g. `24 h average: 24.0 of 24 hours; 7-day average: 2.5 of 7 days (collecting since 2026-11-19 11:30)` |
 | `Temperature Min` / `Temperature Max` | Lowest / highest temperature since the last reset, with the time it was recorded, e.g. `72.4°F @ 11-07 14:22` |
-| `Humidity Min` / `Humidity Max` | Lowest / highest humidity since the last reset, with the time it was recorded |
+| `Humidity Min` / `Humidity Max` | Lowest / highest humidity since the last reset, with the time it was recorded. Not on the SNZB-02LD |
 | `Min/Max Reset` | Time of the last reset (manual or automatic) |
 | `Readings Since Reset` | Number of temperature readings since the last reset |
 | `Last Reading` | Time of the most recent temperature report |
@@ -221,23 +234,23 @@ Model-specific preferences appear only for that model.
 |---|---|---|---|---|
 | Debug logging | all | enabled | | Turns itself off after 24 hours |
 | Description text logging | all | enabled | | Logs readings and confirmations |
-| Device model | all | Automatic | Automatic / SNZB-02P / 02D / SNZB-02DR2 / SNZB-02M | See **Model detection** |
+| Device model | all | Automatic | Automatic / SNZB-02P / 02D / 02LD / SNZB-02DR2 / SNZB-02M | See **Model detection** |
 | Units for temperature settings | all | °C | °C / °F | Unit for the temperature threshold, temperature offset and (SNZB-02DR2) comfort temperatures. See **Temperature units** |
 | Temperature decimal places | all | 1 | 0 / 1 / 2 | Rounded half-up. Use 0 for dashboard tiles that do not handle decimals |
 | Min time between temperature reports | all | 10 s | 1–3600 | Sent to the sensor on Save |
 | Max time between temperature reports | all | 3600 s | 10–43200 | Heartbeat: a report is sent at least this often even with no change. Sent on Save |
 | Temperature reporting threshold | all | 0.2 °C | 0.1–5.0 °C (0.2–9.0 °F) | Minimum change that triggers a report. Sent on Save |
-| Min time between humidity reports | all | 10 s | 1–3600 | Sent on Save |
-| Max time between humidity reports | all | 3600 s | 10–43200 | Sent on Save |
-| Humidity reporting threshold | all | 1 % | 1–10 | Sent on Save |
+| Min time between humidity reports | all but 02LD | 10 s | 1–3600 | Sent on Save |
+| Max time between humidity reports | all but 02LD | 3600 s | 10–43200 | Sent on Save |
+| Humidity reporting threshold | all but 02LD | 1 % | 1–10 | Sent on Save |
 | Pressure unit | 02M | hPa | hPa / kPa / inHg / mmHg | Unit of the `pressure` attribute |
 | Min time between pressure reports | 02M | 60 s | 1–3600 | Sent on Save |
 | Max time between pressure reports | 02M | 3600 s | 10–43200 | Sent on Save |
 | Pressure reporting threshold | 02M | 1 hPa | 1–50 | Sent on Save |
 | Temperature offset | all | 0.0 °C | −20–20 °C (−36–36 °F) | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see **Apply offsets in the sensor**) |
-| Humidity offset | all | 0.0 % | −20–20 % | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor |
+| Humidity offset | all but 02LD | 0.0 % | −20–20 % | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor |
 | Pressure offset | 02M | 0.0 hPa | −50–50 hPa | Added to every reading in Hubitat; always entered in hPa |
-| Calculate dew point and VPD | all | on | | Turning it off removes `dewPoint` and `vpd` |
+| Calculate dew point and VPD | all but 02LD | on | | Turning it off removes `dewPoint` and `vpd` |
 | Calculate averages | all | on | | Rolling temperature and humidity averages. Turning it off removes the average attributes and the stored totals |
 | Averaging period (days) | all | 7 | 2–365 | Length of the longer average |
 | LCD temperature unit | 02DR2 | Leave unchanged | Leave unchanged / °C / °F | Unit on the sensor's screen |
@@ -311,7 +324,7 @@ on firmware 1.0.2).
 
 ## Remote display (SNZB-02DR2)
 
-The SNZB-02DR2 can show a reading from another sensor on its LCD, on the line labelled
+The SNZB-02DR2 can show a reading from another sensor on its LCD, on the line labeled
 **EXT1** (and, on newer firmware, **EXT2**). Sonoff offers this through its own gateways; this
 driver does it from Hubitat. Thanks to **temes33** on the Hubitat Community forum for
 discovering that it works from Hubitat.
@@ -384,7 +397,7 @@ Neither is sent by the sensors; the driver calculates both each time a temperatu
 reading arrives, using the offset-corrected values.
 
 - **Dew point** uses the Magnus formula (a = 17.62, b = 243.12 °C).
-- **VPD** is the saturation vapour pressure (Tetens: 0.6108 × e^(17.27·T / (T + 237.3)) kPa)
+- **VPD** is the saturation vapor pressure (Tetens: 0.6108 × e^(17.27·T / (T + 237.3)) kPa)
   multiplied by (1 − RH/100), shown in kPa to 0.01.
 
 ## Averages
@@ -444,7 +457,7 @@ within seconds. Until then `sensorStatus` says "Waiting for first report…"; th
 empty rather than holding a placeholder that could mislead rules (0 °F would trigger a freeze
 rule, for example).
 
-### The log says my model is not recognised
+### The log says my model is not recognized
 Set **Device model** to the matching model, Save, and reopen the page for its settings.
 Please report the model string shown in the log so it can be added.
 
@@ -471,6 +484,8 @@ No. The sensor only receives a number for each slot and only draws numbers. Nume
 - **SNZB-02D device settings.** The SNZB-02D is treated like the SNZB-02P: its display and
   comfort settings, if any, are not read or changed. Setting **Device model** to SNZB-02DR2
   would try the SNZB-02DR2's settings on it, untested.
+- **SNZB-02LD device settings.** Its LCD unit and temperature calibration, which other platforms
+  can change, are not read or changed here; set them on the sensor or in the eWeLink app.
 - **SNZB-02M settings are read-only.** Its comfort thresholds and calibration are read without
   Sonoff's manufacturer code; this driver does not change them. If those attributes stay empty
   after a Refresh with the sensor awake, please report it.
@@ -493,8 +508,8 @@ No. The sensor only receives a number for each slot and only draws numbers. Nume
 | Poll Control | `0x0020` | all | Sleepy-device check-in (not changed by this driver) |
 | Temperature Measurement | `0x0402` | all | Temperature, 0.01 °C resolution |
 | Pressure Measurement | `0x0403` | 02M | Attr 0x0000 (whole hPa) and 0x0004 (0.01 hPa) |
-| Relative Humidity | `0x0405` | all | Humidity, 0.01 % resolution |
-| Sonoff Private (FC11) | `0xFC11` | 02DR2, 02M | Comfort thresholds, LCD unit, calibration, device min/max, remote display — see below |
+| Relative Humidity | `0x0405` | all but 02LD | Humidity, 0.01 % resolution |
+| Sonoff Private (FC11) | `0xFC11` | 02DR2, 02M (also on the 02LD, not used) | Comfort thresholds, LCD unit, calibration, device min/max, remote display — see below |
 | Sonoff Private (FC57) | `0xFC57` | all | Device management; not used by this driver |
 | Time | `0x000A` | 02P, 02D, 02DR2 | Out-cluster |
 | OTA Upgrade | `0x0019` | all | Out-cluster |
@@ -532,13 +547,14 @@ without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.4.2 | 2026-11-25 | SNZB-02LD (probe thermometer with LCD) recognized as a supported model, with fingerprints, and given the SNZB-02P / 02D features without humidity: humidity reporting is not configured or read, the humidity preferences and **Calculate dew point and VPD** are hidden, and `humidity`, `Humidity Min` / `Max`, `dewPoint`, `vpd` and the humidity averages are removed. American spellings throughout the driver and README (e.g. "recognized", "vapor"). |
 | 1.4.1 | 2026-11-19 | Renamed `temperatureAvgPeriod` / `humidityAvgPeriod` to `temperatureAvgLongTerm` / `humidityAvgLongTerm`, so the name does not read as the period's length. The old attributes are removed when you click **Save Preferences**. |
 | 1.4.0 | 2026-11-19 | Rolling time-weighted averages of temperature and humidity on every model: `temperatureAvg24h`, `humidityAvg24h`, `temperatureAvgPeriod`, `humidityAvgPeriod` and `averagesInfo`. New preferences **Calculate averages** and **Averaging period (days)** (2–365, default 7); new command **Reset Averages**. |
 | 1.3.1 | 2026-11-17 | Removed the experimental **Try Reset Device Min Max** command: on firmware 1.0.2 the sensor answers "write accepted" but keeps its own min/max unchanged, so they can only be reset with the button hold. |
 | 1.3.0 | 2026-11-17 | SNZB-02DR2: new attributes `Device Temp Avg` and `Device Humidity Avg` (FC11 `0x200A` / `0x200D`, previously logged as unexplained reference values). New experimental command **Try Reset Device Min Max**, to find out whether the sensor's own min/max can be reset over Zigbee. |
 | 1.2.1 | 2026-11-17 | Remote display: the highest temperature sent is now 98.9 (was 99.9); the screen shows `HHH` from 99.0 upward. Driver namespace changed from `v. 1.0.0` to `JohnFLand` (it now stays fixed across versions): update by importing or pasting into the existing driver, not by adding a new one. If you did add a new one, switch each device's **Type** to it, then delete the old driver. |
 | 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9 (lowered to 98.9 in 1.2.1). |
-| 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognised instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
+| 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognized instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
 | 1.0.0 | 2026-11-07 | First release. Merges the separate drivers SNZB-02x 1.5.0, SNZB-02DR2 1.13.0 and SNZB-02M 2.4.0, with the model detected from the device. Differences from those drivers: comfort attributes are numbers on every model (`comfortTempMin/Max`, `comfortHumidityMin/Max`; the SNZB-02DR2 driver used text values and `comfortHumiMin/Max`); dew point and VPD are calculated for every model and can be turned off; the Configure command, sanity checks on raw readings and logging of write responses apply to every model; `temperatureCalibration` and `humidityCalibration` are published whenever the sensor sends them; humidity is shown in whole percent on every model (the SNZB-02M driver showed 0.1 %); default values on the preferences page follow the selected temperature unit. |
 
 ---
