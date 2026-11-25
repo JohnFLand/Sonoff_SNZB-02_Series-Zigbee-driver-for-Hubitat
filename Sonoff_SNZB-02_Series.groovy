@@ -2,7 +2,7 @@
 /**
  *  Sonoff SNZB-02 Series Temperature and Humidity Sensor — unified Hubitat driver
  *
- *  One driver for the Sonoff SNZB-02P, SNZB-02D, SNZB-02DR2 and SNZB-02M Zigbee sensors.
+ *  One driver for the Sonoff SNZB-02P, SNZB-02D, SNZB-02LD, SNZB-02DR2 and SNZB-02M Zigbee sensors.
  *  The model is detected from the device's model string (or set with the "Device model"
  *  preference), and model-specific features are switched on accordingly:
  *
@@ -10,6 +10,8 @@
  *                 °C/°F temperature settings; temperature decimal places (half-up rounding);
  *                 dew point and VPD; Hubitat-tracked min/max with timestamps and daily
  *                 auto-reset; healthStatus and sensorStatus
+ *    SNZB-02LD    The features above apart from humidity, dew point and VPD: it measures temperature
+ *                 only, through its probe
  *    SNZB-02DR2   Comfort thresholds and LCD temperature unit written to the device (FC11,
  *                 manufacturer code 0x1286); device-native 24-hour min/max; readings sent
  *                 from Hubitat shown on the display's EXT line (Set Remote Temperature /
@@ -17,8 +19,9 @@
  *    SNZB-02M    Barometric pressure (0.1 hPa, selectable unit);
  *                 comfort thresholds and calibration read back from the device (FC11)
  *
- *  The Pressure Measurement capability is declared for every model because Hubitat
- *  capabilities cannot vary by device. Only the SNZB-02M ever reports a pressure value.
+ *  The Pressure Measurement and Relative Humidity Measurement capabilities are declared for every
+ *  model because Hubitat capabilities cannot vary by device. Only the SNZB-02M ever reports a
+ *  pressure value, and the SNZB-02LD never reports humidity.
  *
  *  NOTE: These are sleepy end-devices. Press the sensor's button immediately before clicking
  *  Save Preferences, Configure, Refresh or Initialize, otherwise the commands will not reach it.
@@ -40,6 +43,12 @@
  *  Licensed under the Apache License, Version 2.0
  *
  *  Changelog:
+ *    1.4.2  2026-11-25  SNZB-02LD (probe thermometer with LCD) recognized as a supported model, with
+ *                       fingerprints, and given the basic features without humidity: humidity reporting
+ *                       is not configured or read, the humidity preferences and "Calculate dew point
+ *                       and VPD" are hidden, and humidity, Humidity Min/Max, dewPoint, vpd and the
+ *                       humidity averages are removed. American spellings throughout the driver and
+ *                       README (e.g. "recognized", "vapor").
  *    1.4.1  2026-11-19  Renamed temperatureAvgPeriod / humidityAvgPeriod to temperatureAvgLongTerm /
  *                       humidityAvgLongTerm, so the name does not read as the period's length. The old
  *                       attributes are removed on Save Preferences.
@@ -86,7 +95,7 @@
  *                       On a °F screen the value is rounded so the sensor's own conversion shows the
  *                       tenth entered (it cuts digits off: 70 °F sent as 21.11 °C showed 69.9).
  *                       The Identify message the sensor sends when its button is pressed is now
- *                       recognised instead of being logged as an unhandled cluster.
+ *                       recognized instead of being logged as an unhandled cluster.
  *    1.0.0 2026-11-07  First release. Merges the separate drivers SNZB-02x 1.5.0, SNZB-02DR2
  *                       1.13.0 and SNZB-02M 2.4.0. Differences from those drivers:
  *                       - Comfort attributes are numbers on every model: comfortTempMin/Max and
@@ -107,8 +116,8 @@
 import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 
-@Field static final String VERSION    = '1.4.1'
-@Field static final String TIME_STAMP = '2026-11-19'
+@Field static final String VERSION    = '1.4.2'
+@Field static final String TIME_STAMP = '2026-11-25'
 
 // ── Clusters ─────────────────────────────────────────────────────────────────
 @Field static final Integer CLUSTER_BASIC     = 0x0000
@@ -164,7 +173,12 @@ import hubitat.zigbee.zcl.DataType
 @Field static final List<Integer> LCD_UNIT_TYPES = [0x21, 0x30, 0x10, 0x20]
 
 // ── Models ───────────────────────────────────────────────────────────────────
-@Field static final Map MODEL_NAMES = [BASIC: 'SNZB-02P / SNZB-02D', DR2: 'SNZB-02DR2', M: 'SNZB-02M']
+@Field static final Map MODEL_NAMES = [BASIC: 'SNZB-02P / SNZB-02D / SNZB-02LD', DR2: 'SNZB-02DR2', M: 'SNZB-02M']
+// Model strings that use the basic features (SNZB-02LD: temperature-only probe sensor)
+@Field static final List<String> BASIC_MODELS = ['SNZB-02P', 'SNZB-02D', 'SNZB-02LD']
+// Attributes that only make sense with a humidity sensor; removed on the SNZB-02LD
+@Field static final List<String> HUMIDITY_ATTRS = ['humidity', 'Humidity Min', 'Humidity Max', 'dewPoint', 'vpd',
+                                                   'humidityAvg24h', 'humidityAvgLongTerm']
 
 // ── Sanity bounds for RAW readings (reject corrupt or partial frames) ────────
 @Field static final double TEMP_MIN_C    =  -40.0
@@ -203,7 +217,7 @@ metadata {
     ) {
         capability 'Sensor'
         capability 'TemperatureMeasurement'
-        capability 'RelativeHumidityMeasurement'
+        capability 'RelativeHumidityMeasurement'  // not reported by the SNZB-02LD
         capability 'PressureMeasurement'          // reported by the SNZB-02M only
         capability 'Battery'
         capability 'Refresh'
@@ -211,7 +225,7 @@ metadata {
 
         // Calculated from temperature + humidity
         attribute 'dewPoint',               'number'
-        attribute 'vpd',                    'number'   // vapour pressure deficit, kPa
+        attribute 'vpd',                    'number'   // vapor pressure deficit, kPa
 
         // Rolling time-weighted averages (all models)
         attribute 'temperatureAvg24h',      'number'
@@ -280,6 +294,12 @@ metadata {
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0402,0405,0020,FC57',
                     outClusters: '000A,0019', model: 'SNZB-02D', manufacturer: 'eWeLink',
                     deviceJoinName: 'Sonoff SNZB-02D Temperature and Humidity Sensor'
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0402,0020,FC57,FC11',
+                    outClusters: '0019', model: 'SNZB-02LD', manufacturer: 'SONOFF',
+                    deviceJoinName: 'Sonoff SNZB-02LD Temperature Sensor'
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0402,0020,FC57,FC11',
+                    outClusters: '0019', model: 'SNZB-02LD', manufacturer: 'eWeLink',
+                    deviceJoinName: 'Sonoff SNZB-02LD Temperature Sensor'
         fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0001,0003,0402,0405,0020,FC57,FC11',
                     outClusters: '000A,0019', model: 'SNZB-02DR2', manufacturer: 'SONOFF',
                     deviceJoinName: 'Sonoff SNZB-02DR2 AirGuard TH'
@@ -314,8 +334,8 @@ metadata {
         input name: 'modelOverride',
               type: 'enum',
               title: '<b>Device model</b>',
-              description: 'Leave on Automatic unless the model was not recognised (see the log). Save, then reopen this page to see the settings for the chosen model.',
-              options: ['auto': 'Automatic (from the device)', 'BASIC': 'SNZB-02P / SNZB-02D', 'DR2': 'SNZB-02DR2', 'M': 'SNZB-02M'],
+              description: 'Leave on Automatic unless the model was not recognized (see the log). Save, then reopen this page to see the settings for the chosen model.',
+              options: ['auto': 'Automatic (from the device)', 'BASIC': 'SNZB-02P / SNZB-02D / SNZB-02LD', 'DR2': 'SNZB-02DR2', 'M': 'SNZB-02M'],
               defaultValue: 'auto'
 
         input name: 'tempPrefUnit',
@@ -352,26 +372,28 @@ metadata {
               description: 'Minimum change to trigger a temperature report, in the unit selected above. Range 0.1 to 5.0 °C (0.2 to 9.0 °F). Wake device before saving.',
               defaultValue: tempPrefDefault('tempChange')
 
-        input name: 'minReportHumi',
-              type: 'number',
-              title: '<b>Min time between humidity reports (seconds)</b>',
-              description: 'Minimum reporting interval for humidity. Range 1 to 3600. Wake device before saving.',
-              defaultValue: 10,
-              range: '1..3600'
+        if (hasHumidity()) {
+            input name: 'minReportHumi',
+                  type: 'number',
+                  title: '<b>Min time between humidity reports (seconds)</b>',
+                  description: 'Minimum reporting interval for humidity. Range 1 to 3600. Wake device before saving.',
+                  defaultValue: 10,
+                  range: '1..3600'
 
-        input name: 'maxReportHumi',
-              type: 'number',
-              title: '<b>Max time between humidity reports (seconds)</b>',
-              description: 'Maximum reporting interval (heartbeat) for humidity. Range 10 to 43200. Wake device before saving.',
-              defaultValue: 3600,
-              range: '10..43200'
+            input name: 'maxReportHumi',
+                  type: 'number',
+                  title: '<b>Max time between humidity reports (seconds)</b>',
+                  description: 'Maximum reporting interval (heartbeat) for humidity. Range 10 to 43200. Wake device before saving.',
+                  defaultValue: 3600,
+                  range: '10..43200'
 
-        input name: 'humiChange',
-              type: 'number',
-              title: '<b>Humidity reporting threshold (%)</b>',
-              description: 'Minimum change to trigger a humidity report. Range 1 to 10. Wake device before saving.',
-              defaultValue: 1,
-              range: '1..10'
+            input name: 'humiChange',
+                  type: 'number',
+                  title: '<b>Humidity reporting threshold (%)</b>',
+                  description: 'Minimum change to trigger a humidity report. Range 1 to 10. Wake device before saving.',
+                  defaultValue: 1,
+                  range: '1..10'
+        }
 
         if (isModelM()) {
             input name: 'pressureUnit',
@@ -409,11 +431,13 @@ metadata {
               description: 'Offset added to every temperature reading, in the unit selected above. Range -20 to 20 °C (-36 to 36 °F). Applied in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see below).',
               defaultValue: tempPrefDefault('temperatureOffset')
 
-        input name: 'humidityOffset',
-              type: 'decimal',
-              title: '<b>Humidity offset (%)</b>',
-              description: 'Offset added to every humidity reading. Range -20.0 to 20.0. Applied in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see below).',
-              defaultValue: 0.0
+        if (hasHumidity()) {
+            input name: 'humidityOffset',
+                  type: 'decimal',
+                  title: '<b>Humidity offset (%)</b>',
+                  description: 'Offset added to every humidity reading. Range -20.0 to 20.0. Applied in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see below).',
+                  defaultValue: 0.0
+        }
 
         if (isModelM()) {
             input name: 'pressureOffset',
@@ -423,11 +447,13 @@ metadata {
                   defaultValue: 0.0
         }
 
-        input name: 'derivedEnable',
-              type: 'bool',
-              title: '<b>Calculate dew point and VPD</b>',
-              description: 'Publish dew point and vapour pressure deficit, calculated from temperature and humidity.',
-              defaultValue: true
+        if (hasHumidity()) {
+            input name: 'derivedEnable',
+                  type: 'bool',
+                  title: '<b>Calculate dew point and VPD</b>',
+                  description: 'Publish dew point and vapor pressure deficit, calculated from temperature and humidity.',
+                  defaultValue: true
+        }
 
         input name: 'avgEnable',
               type: 'bool',
@@ -506,7 +532,7 @@ metadata {
 
 // ── Model detection ──────────────────────────────────────────────────────────
 
-// 'DR2', 'M' or 'BASIC' (SNZB-02P / SNZB-02D and anything unrecognised)
+// 'DR2', 'M' or 'BASIC' (SNZB-02P / SNZB-02D / SNZB-02LD and anything unrecognized)
 private String modelType() {
     String o = (settings?.modelOverride ?: 'auto') as String
     if (o in ['BASIC', 'DR2', 'M']) { return o }
@@ -519,6 +545,16 @@ private String modelType() {
 private boolean isModelDR2() { return modelType() == 'DR2' }
 private boolean isModelM()   { return modelType() == 'M' }
 
+// The SNZB-02LD (probe thermometer) has no humidity sensor. Decided from the device's model string,
+// whatever "Device model" is set to, since no setting can give it one.
+private boolean isModelLD()   { return ((device?.getDataValue('model') ?: '') as String).startsWith('SNZB-02LD') }
+private boolean hasHumidity() { return !isModelLD() }
+
+private void removeHumidityStates() {
+    ['rawHumi', 'minHumi', 'maxHumi', 'avgLastH'].each { String k -> state.remove(k) }
+    HUMIDITY_ATTRS.each { String a -> try { device.deleteCurrentState(a) } catch (ignored) { } }
+}
+
 private void detectModel() {
     String type = modelType()
     String model = (device.getDataValue('model') ?: 'unknown') as String
@@ -527,9 +563,10 @@ private void detectModel() {
         logInfo "Model ${model}: using ${MODEL_NAMES[type]} features"
     }
     state.model = model
+    if (!hasHumidity()) { removeHumidityStates() }
     boolean auto = (settings?.modelOverride ?: 'auto') == 'auto'
-    if (auto && type == 'BASIC' && !(model.startsWith('SNZB-02P') || model.startsWith('SNZB-02D'))) {
-        logWarn "Model '${model}' is not recognised; using basic temperature/humidity features. " +
+    if (auto && type == 'BASIC' && !BASIC_MODELS.any { String b -> model.startsWith(b) }) {
+        logWarn "Model '${model}' is not recognized; using basic temperature/humidity features. " +
                 'Set "Device model" in Preferences if it is one of the supported sensors.'
     }
 }
@@ -637,7 +674,9 @@ private void republishCurrent() {
 private List<String> readValueCmds(boolean withVoltage) {
     List<String> cmds = []
     cmds += zigbee.readAttribute(CLUSTER_TEMP,      0x0000, [:], 200)
-    cmds += zigbee.readAttribute(CLUSTER_HUMIDITY,  0x0000, [:], 200)
+    if (hasHumidity()) {
+        cmds += zigbee.readAttribute(CLUSTER_HUMIDITY, 0x0000, [:], 200)
+    }
     if (isModelM()) {
         cmds += zigbee.readAttribute(CLUSTER_PRESSURE, PRESSURE_ATTR_PRECISE, [:], 200)
         cmds += zigbee.readAttribute(CLUSTER_PRESSURE, PRESSURE_ATTR, [:], 200)
@@ -663,8 +702,10 @@ def resetMinMax() {
     sendEvent(name: 'Readings Since Reset', value: 0,    descriptionText: 'Reading counter reset to 0')
     sendEvent(name: 'Temperature Min',      value: '--', descriptionText: 'Min temperature reset')
     sendEvent(name: 'Temperature Max',      value: '--', descriptionText: 'Max temperature reset')
-    sendEvent(name: 'Humidity Min',         value: '--', descriptionText: 'Min humidity reset')
-    sendEvent(name: 'Humidity Max',         value: '--', descriptionText: 'Max humidity reset')
+    if (hasHumidity()) {
+        sendEvent(name: 'Humidity Min',     value: '--', descriptionText: 'Min humidity reset')
+        sendEvent(name: 'Humidity Max',     value: '--', descriptionText: 'Max humidity reset')
+    }
 }
 
 // ── Rolling averages ──────────────────────────────────────────────────────────
@@ -1046,6 +1087,7 @@ private void publishTemperature(boolean fresh) {
 }
 
 private void parseHumiCluster(Map descMap) {
+    if (!hasHumidity()) { logDebug 'humidity frame ignored (this model has no humidity sensor)'; return }
     if (descMap.attrInt != null && descMap.attrInt != 0x0000) { return }
     if (!descMap.value || descMap.value.length() > 8) { return }
     Integer raw = (Long.parseLong(descMap.value, 16) & 0xFFFF) as Integer
@@ -1315,7 +1357,7 @@ private String formatTemp(double tempC) {
 // Calculated from the latest offset-corrected temperature and humidity.
 
 private void updateDerived() {
-    if (derivedEnable == false) { return }
+    if (derivedEnable == false || !hasHumidity()) { return }
     Double tRef = adjTempC()
     Double hRef = adjHumi()
     if (tRef == null || hRef == null) { return }
@@ -1329,7 +1371,7 @@ private void updateDerived() {
     double gamma = Math.log(h / 100.0) + (a * t) / (b + t)
     double dewC = (b * gamma) / (a - gamma)
 
-    // Vapour pressure deficit (kPa), saturation pressure by Tetens
+    // Vapor pressure deficit (kPa), saturation pressure by Tetens
     double es = 0.6108 * Math.exp((17.27 * t) / (t + 237.3))
     double vpdKpa = Math.max(0.0, es * (1.0 - h / 100.0))
 
@@ -1394,10 +1436,14 @@ private List<String> reportingConfigCmds() {
     Integer tempDelta = Math.round(prefTempChange() * 100) as Integer
     cmds += zigbee.configureReporting(CLUSTER_TEMP, 0x0000, DataType.INT16, tMin, tMax, tempDelta, [:], 200)
 
-    int hMin = Math.max(1, Math.min(3600, safeInt(minReportHumi, 10)))
-    int hMax = Math.max(hMin, Math.min(43200, safeInt(maxReportHumi, 3600)))
-    int humiStep = Math.max(1, Math.min(10, safeInt(humiChange, 1)))
-    cmds += zigbee.configureReporting(CLUSTER_HUMIDITY, 0x0000, DataType.UINT16, hMin, hMax, humiStep * 100, [:], 200)
+    String humiLog = ''
+    if (hasHumidity()) {
+        int hMin = Math.max(1, Math.min(3600, safeInt(minReportHumi, 10)))
+        int hMax = Math.max(hMin, Math.min(43200, safeInt(maxReportHumi, 3600)))
+        int humiStep = Math.max(1, Math.min(10, safeInt(humiChange, 1)))
+        cmds += zigbee.configureReporting(CLUSTER_HUMIDITY, 0x0000, DataType.UINT16, hMin, hMax, humiStep * 100, [:], 200)
+        humiLog = ", humidity ${hMin}-${hMax}s / ${humiStep}%"
+    }
 
     String pressLog = ''
     if (isModelM()) {
@@ -1413,14 +1459,14 @@ private List<String> reportingConfigCmds() {
 
     cmds += zigbee.configureReporting(CLUSTER_POWER_CFG, 0x0021, DataType.UINT8, 60, 14400, 1, [:], 200)
 
-    logDebug "Reporting config: temp ${tMin}-${tMax}s / ${tempDelta / 100.0}°C, humidity ${hMin}-${hMax}s / ${humiStep}%${pressLog}"
+    logDebug "Reporting config: temp ${tMin}-${tMax}s / ${tempDelta / 100.0}°C${humiLog}${pressLog}"
     return cmds
 }
 
 // ── FC11 helpers ─────────────────────────────────────────────────────────────
 
 // Settings read back from the sensor: comfort thresholds (+ LCD unit on the SNZB-02DR2,
-// + calibration on the SNZB-02M). Nothing for the SNZB-02P / SNZB-02D.
+// + calibration on the SNZB-02M). Nothing for the SNZB-02P / SNZB-02D / SNZB-02LD.
 private List<String> fc11SettingsReadCmds() {
     List<String> cmds = []
     if (isModelDR2()) {
@@ -2049,8 +2095,10 @@ private void initVars(boolean fullInit) {
         sendEvent(name: 'Readings Since Reset', value: 0,    descriptionText: 'Reading counter initialized')
         sendEvent(name: 'Temperature Min',      value: '--')
         sendEvent(name: 'Temperature Max',      value: '--')
-        sendEvent(name: 'Humidity Min',         value: '--')
-        sendEvent(name: 'Humidity Max',         value: '--')
+        if (hasHumidity()) {
+            sendEvent(name: 'Humidity Min',     value: '--')
+            sendEvent(name: 'Humidity Max',     value: '--')
+        }
         if (isModelDR2()) {
             // Device-native min/max: '--' keeps them visible until the device's hourly report
             ['Device Temp Max', 'Device Temp Min', 'Device Temp Avg',
